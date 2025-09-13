@@ -56,9 +56,10 @@ async def callback_handler(client, callback_query):
 async def send_stored_file(client, message, payload):
     try:
         msg_id = int(payload)
+
         sent = await client.copy_message(
             chat_id=message.chat.id,
-            from_chat_id=CHANNEL_ID,
+            from_chat_id=CHANNEL_ID if str(CHANNEL_ID).startswith("@") else int(CHANNEL_ID),
             message_id=msg_id
         )
 
@@ -72,7 +73,7 @@ async def send_stored_file(client, message, payload):
         asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
 
     except Exception as e:
-        await message.reply_text("❌ File not found or expired!")
+        await message.reply_text(f"❌ File not found or expired!\n\nDebug: {e}")
 
 
 # Auto delete function + notify user
