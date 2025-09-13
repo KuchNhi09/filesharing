@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -1002909767501
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -1001234567890
 AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 30)
 
 # Bot client
@@ -17,7 +17,6 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
-
 
 # ✅ Test command to check channel access
 @app.on_message(filters.private & filters.command("test"))
@@ -82,7 +81,8 @@ async def send_stored_file(client, message, payload):
             "Please **save or forward** them to your personal Saved Messages!"
         )
 
-        asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
+        # ✅ Fixed: use sent.id instead of sent.message_id
+        asyncio.create_task(delete_after(sent.chat.id, sent.id, payload, message.chat.id))
 
     except Exception as e:
         await message.reply_text(f"❌ File not found or expired!\n\nDebug: `{e}`")
