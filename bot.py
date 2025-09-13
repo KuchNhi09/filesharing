@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")  # without @
+CHANNEL_ID = os.getenv("CHANNEL_USERNAME")  # Public: @username | Private: -100...
 AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 30)
 
 # Bot client
@@ -17,6 +17,7 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
 
 # Start command handler
 @app.on_message(filters.private & filters.command("start"))
@@ -35,7 +36,8 @@ async def start_cmd(client, message):
         payload = message.command[1]
         await send_stored_file(client, message, payload)
 
-# Callback query handler
+
+# Help button callback
 @app.on_callback_query()
 async def callback_handler(client, callback_query):
     if callback_query.data == "help":
@@ -45,6 +47,10 @@ async def callback_handler(client, callback_query):
             "2. I will send you the requested file with a shareable link.\n"
             f"3. Files auto-delete after {AUTO_DELETE_MINUTES} minutes ⏳."
         )
+    elif callback_query.data.startswith("getfile_"):
+        payload = callback_query.data.split("_", 1)[1]
+        await send_stored_file(client, callback_query.message, payload)
+
 
 # Function: Send stored file
 async def send_stored_file(client, message, payload):
@@ -52,7 +58,7 @@ async def send_stored_file(client, message, payload):
         msg_id = int(payload)
         sent = await client.copy_message(
             message.chat.id,
-            f"@{CHANNEL_USERNAME}",
+            CHANNEL_ID,
             msg_id
         )
 
@@ -62,18 +68,32 @@ async def send_stored_file(client, message, payload):
             "Please **save or forward** them to your personal Saved Messages!"
         )
 
-        asyncio.create_task(delete_after(sent.chat.id, sent.message_id))
+        # schedule delete with notify
+        asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
 
     except Exception as e:
         await message.reply_text("❌ File not found or expired!")
 
-# Auto delete function
-async def delete_after(chat_id, msg_id):
+
+# Auto delete function + notify user
+async def delete_after(chat_id, msg_id, payload, user_id):
     await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
     try:
         await app.delete_messages(chat_id, msg_id)
+
+        # Notify user with button
+        await app.send_message(
+            user_id,
+            "ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!\n\n"
+            "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴ ᴛᴏ ɢᴇᴛ ʏᴏᴜʀ ᴅᴇʟᴇᴛᴇᴅ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ 👇",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔁 Get File Again!", callback_data=f"getfile_{payload}")]]
+            )
+        )
+
     except:
         pass
+
 
 if __name__ == "__main__":
     app.run()
