@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Public: @username | Private: -100...
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Example: -1002909767501
 AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 30)
 
 # Bot client
@@ -17,6 +17,20 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+
+# ✅ Test command to check channel access
+@app.on_message(filters.private & filters.command("test"))
+async def test_cmd(client, message):
+    try:
+        chat = await client.get_chat(CHANNEL_ID)
+        await message.reply_text(
+            f"✅ Bot को channel access है!\n\n"
+            f"📌 Channel Title: {chat.title}\n"
+            f"🆔 Channel ID: `{chat.id}`"
+        )
+    except Exception as e:
+        await message.reply_text(f"❌ Bot channel तक पहुँच नहीं पा रहा:\n\n`{e}`")
 
 
 # Start command handler
@@ -56,11 +70,10 @@ async def callback_handler(client, callback_query):
 async def send_stored_file(client, message, payload):
     try:
         msg_id = int(payload)
-
         sent = await client.copy_message(
-            chat_id=message.chat.id,
-            from_chat_id=CHANNEL_ID if str(CHANNEL_ID).startswith("@") else int(CHANNEL_ID),
-            message_id=msg_id
+            message.chat.id,
+            CHANNEL_ID,
+            msg_id
         )
 
         await message.reply_text(
@@ -69,11 +82,10 @@ async def send_stored_file(client, message, payload):
             "Please **save or forward** them to your personal Saved Messages!"
         )
 
-        # schedule delete with notify
         asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
 
     except Exception as e:
-        await message.reply_text(f"❌ File not found or expired!\n\nDebug: {e}")
+        await message.reply_text(f"❌ File not found or expired!\n\nDebug: `{e}`")
 
 
 # Auto delete function + notify user
@@ -82,7 +94,6 @@ async def delete_after(chat_id, msg_id, payload, user_id):
     try:
         await app.delete_messages(chat_id, msg_id)
 
-        # Notify user with button
         await app.send_message(
             user_id,
             "ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!\n\n"
