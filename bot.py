@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_USERNAME")  # Public: @username | Private: -100...
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Public: @username | Private: -100...
 AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 30)
 
 # Bot client
@@ -57,9 +57,9 @@ async def send_stored_file(client, message, payload):
     try:
         msg_id = int(payload)
         sent = await client.copy_message(
-            message.chat.id,
-            CHANNEL_ID,
-            msg_id
+            chat_id=message.chat.id,
+            from_chat_id=CHANNEL_ID,
+            message_id=msg_id
         )
 
         await message.reply_text(
@@ -84,7 +84,7 @@ async def delete_after(chat_id, msg_id, payload, user_id):
         # Notify user with button
         await app.send_message(
             user_id,
-            "ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!\n\n"
+            "ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!\n\n"
             "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴ ᴛᴏ ɢᴇᴛ ʏᴏᴜʀ ᴅᴇʟᴇᴛᴇᴅ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ 👇",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔁 Get File Again!", callback_data=f"getfile_{payload}")]]
