@@ -12,9 +12,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [8324187938, 603360648]  # 👈 तुम्हारे admin IDs
 FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # -100 से शुरू होने वाला channel id
 
+# Default settings (Panel से बदले जा सकते हैं)
 AUTO_DELETE_MINUTES = 15
 THANK_YOU_MSG = "✅ Thank you for using our bot! Share our channel with friends 🎉"
-FORCE_CHANNELS = []
+FORCE_CHANNELS = []  # यहां channel IDs की list रहेगी
 
 # ---------------- CLIENT ----------------
 app = Client("file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -24,11 +25,9 @@ users_db = {}
 today_users = set()
 waiting_for_file = {}  # {admin_id: True/False}
 
-
 # ---------------- HELPERS ----------------
 def is_admin(user_id):
     return user_id in ADMINS
-
 
 def user_stats():
     return {
@@ -36,7 +35,6 @@ def user_stats():
         "today": len(today_users),
         "active": sum(1 for u in users_db.values() if datetime.now() - u < timedelta(days=7))
     }
-
 
 async def check_force_join(user_id):
     if not FORCE_CHANNELS:
@@ -50,7 +48,6 @@ async def check_force_join(user_id):
         except:
             not_joined.append(ch)
     return (len(not_joined) == 0), not_joined
-
 
 # ---------------- HANDLERS ----------------
 @app.on_message(filters.private & filters.command("start"))
@@ -80,7 +77,6 @@ async def start_handler(client, message):
     else:
         payload = message.command[1]
         await send_stored_file(client, message, payload)
-
 
 @app.on_callback_query()
 async def callback_handler(client, cq):
@@ -126,7 +122,6 @@ async def callback_handler(client, cq):
             f"📌 Force Channels: {FORCE_CHANNELS or 'None'}"
         )
 
-
 # ---------------- FILE HANDLING ----------------
 async def send_stored_file(client, message, payload):
     user_id = message.from_user.id
@@ -150,7 +145,6 @@ async def send_stored_file(client, message, payload):
     except Exception as e:
         await message.reply_text(f"❌ File not found!\n\nDebug: {e}")
 
-
 async def delete_after(chat_id, msg_id, payload, user_id):
     await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
     try:
@@ -158,24 +152,6 @@ async def delete_after(chat_id, msg_id, payload, user_id):
         await app.send_message(user_id, THANK_YOU_MSG)
     except:
         pass
-
-
-# ---------------- ADMIN FILE UPLOAD ----------------
-@app.on_message(filters.private & filters.document & filters.user(ADMINS))
-async def admin_file_handler(client, message):
-    user_id = message.from_user.id
-    if waiting_for_file.get(user_id):
-        try:
-            sent = await client.copy_message(FILE_CHANNEL, message.chat.id, message.id)
-            msg_id = sent.id
-            bot_username = (await app.get_me()).username
-            link = f"https://t.me/{bot_username}?start={msg_id}"
-            await message.reply_text(f"✅ Sharable Link Generated:\n{link}")
-        except Exception as e:
-            await message.reply_text(f"❌ Failed to save file.\n\nDebug: {e}")
-        finally:
-            waiting_for_file[user_id] = False
-
 
 # ---------------- ADMIN PANEL ----------------
 async def show_admin_panel(msg):
@@ -191,6 +167,21 @@ async def show_admin_panel(msg):
     ]
     await msg.reply_text("⚙️ **Admin Panel**", reply_markup=InlineKeyboardMarkup(buttons))
 
+# ---------------- ADMIN FILE HANDLER ----------------
+@app.on_message(filters.private & filters.document & filters.user(ADMINS))
+async def admin_file_handler(client, message):
+    user_id = message.from_user.id
+    if waiting_for_file.get(user_id):
+        try:
+            sent = await client.copy_message(FILE_CHANNEL, message.chat.id, message.id)
+            msg_id = sent.id
+            bot_username = (await app.get_me()).username
+            link = f"https://t.me/{bot_username}?start={msg_id}"
+            await message.reply_text(f"✅ Sharable Link Generated:\n{link}")
+        except Exception as e:
+            await message.reply_text(f"❌ Failed to save file.\n\nDebug: {e}")
+        finally:
+            waiting_for_file[user_id] = False
 
 # ---------------- REQUEST HANDLING ----------------
 @app.on_message(filters.private & ~filters.command("start"))
@@ -205,7 +196,6 @@ async def handle_requests(client, message):
         await message.reply_text("✅ Your request has been sent to admins.")
     elif not is_admin(user_id):
         await message.reply_text("⚠️ Files are only available via sharable links!")
-
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
