@@ -3,17 +3,17 @@ import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ---------------- CONFIG ----------------
+# ========= ENV VARIABLES =========
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))   # channel id (-100 से शुरू)
-AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 30)
+FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # -100 से शुरू होने वाला Channel ID
+AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 15)
 
-ADMINS = {8324187938, 603360648}  # तुम और तुम्हारी दूसरी ID
-USERS = set()
-# ----------------------------------------
+# ========= ADMINS =========
+ADMINS = [8324187938, 603360648]
 
+# ========= BOT INIT =========
 app = Client(
     "file_store_bot",
     api_id=API_ID,
@@ -21,87 +21,147 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# ----------- Start Command -----------
-@app.on_message(filters.command("start"))
-async def start_cmd(client, message):
-    USERS.add(message.from_user.id)
+# ========= STORAGE =========
+users_db = set()
+files_db = {}
 
-    if len(message.command) > 1:
-        code = message.command[1]
-        try:
-            msg_id = int(code)
-            file = await client.get_messages(FILE_CHANNEL, msg_id)
-            sent = await file.copy(message.chat.id)
-            if AUTO_DELETE_MINUTES > 0:
-                await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
-                await sent.delete()
-        except Exception as e:
-            await message.reply(f"❌ File not found!\n\nDebug: {e}")
-    else:
+# ========= START HANDLER =========
+@app.on_message(filters.private & filters.command("start"))
+async def start_cmd(client, message):
+    users_db.add(message.from_user.id)
+
+    if len(message.command) == 1:
+        # Normal start (Welcome msg)
         if message.from_user.id in ADMINS:
-            await message.reply("👋 Welcome Admin!\nUse /panel to manage settings.")
+            await message.reply_text("👋 Welcome Admin!\nSend /panel to open admin panel.")
         else:
-            await message.reply(
+            await message.reply_text(
                 f"Hello {message.from_user.first_name} ✨\n\n"
                 "Send me any file and I’ll give you a sharable link 📂\n\n"
                 "Users can access stored messages by clicking those links.\n\n"
                 "To know more, click the Help button 👇",
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("📖 Help", callback_data="help")]]
+                    [[
+                        InlineKeyboardButton("📖 Help", callback_data="help"),
+                        InlineKeyboardButton("📝 Request/Feedback", callback_data="feedback")
+                    ]]
                 ),
             )
+    else:
+        # Payload (Sharable link)
+        payload = message.command[1]
+        if payload in files_db:
+            msg_id = files_db[payload]
+            await send_stored_file(client, message, msg_id, payload)
+        else:
+            await message.reply_text("❌ Invalid or expired sharable link!")
 
-# ----------- Help Button -----------
+# ========= CALLBACKS =========
 @app.on_callback_query()
-async def callback_handler(client, callback_query):
-    if callback_query.data == "help":
-        await callback_query.message.reply_text(
-            "📖 **Help & Feedback**\n\n"
-            "Got any request or feedback?\n"
-            "👉 Just type your message here and I’ll deliver it to the admin!"
+async def callback_handler(client, cq):
+    if cq.data == "help":
+        await cq.message.reply_text(
+            "📖 **How to use me?**\n\n"
+            "1. Click on valid sharable links.\n"
+            "2. I will send you the requested file.\n"
+            f"3. Files auto-delete after {AUTO_DELETE_MINUTES} minutes ⏳."
         )
-    elif callback_query.data.startswith("getfile_"):
-        payload = callback_query.data.split("_", 1)[1]
-        await send_stored_file(client, callback_query.message, payload)
 
-# ----------- Send File Function -----------
-async def send_stored_file(client, message, payload):
+    elif cq.data == "feedback":
+        await cq.message.reply_text(
+            "💌 Please type your request/feedback and send it.\n\n(Admins will receive it directly)"
+        )
+
+    elif cq.data.startswith("getfile_"):
+        payload = cq.data.split("_", 1)[1]
+        if payload in files_db:
+            msg_id = files_db[payload]
+            await send_stored_file(client, cq.message, msg_id, payload)
+
+# ========= FEEDBACK HANDLER =========
+@app.on_message(filters.private & ~filters.command(["start", "panel"]))
+async def feedback_handler(client, message):
+    if message.text and message.from_user.id not in ADMINS:
+        for admin in ADMINS:
+            try:
+                await client.send_message(
+                    admin,
+                    f"📩 **Feedback from {message.from_user.mention}:**\n\n{message.text}"
+                )
+            except:
+                pass
+
+# ========= FILE SENDER =========
+async def send_stored_file(client, message, msg_id, payload):
     try:
-        msg_id = int(payload)
         sent = await client.copy_message(
             message.chat.id,
             FILE_CHANNEL,
             msg_id
         )
-
         await message.reply_text(
             f"⚠️ **Important:**\n\n"
             f"All messages will be deleted after {AUTO_DELETE_MINUTES} minutes.\n"
             "Please **save or forward** them to your personal Saved Messages!"
         )
-
         asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
-
     except Exception as e:
-        await message.reply_text(f"❌ File not found!\n\nDebug: {e}")
+        await message.reply_text("❌ File not found or expired!")
 
-# ----------- Auto Delete + Notify -----------
+# ========= AUTO DELETE =========
 async def delete_after(chat_id, msg_id, payload, user_id):
     await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
     try:
         await app.delete_messages(chat_id, msg_id)
-
         await app.send_message(
             user_id,
-            "ʏᴏᴜʀ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ ɪꜱ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ᴅᴇʟᴇᴛᴇᴅ !!\n\n"
-            "ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴ ᴛᴏ ɢᴇᴛ ʏᴏᴜʀ ᴅᴇʟᴇᴛᴇᴅ ᴠɪᴅᴇᴏ / ꜰɪʟᴇ 👇",
+            "🗑️ Your file has been deleted!\n\nClick below to get it again 👇",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔁 Get File Again!", callback_data=f"getfile_{payload}")]]
             )
         )
-
     except:
         pass
 
+# ========= ADMIN PANEL =========
+@app.on_message(filters.private & filters.command("panel"))
+async def admin_panel(client, message):
+    if message.from_user.id not in ADMINS:
+        return
+    await message.reply_text(
+        "⚙️ **Admin Panel**\n\nChoose an option:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Generate Sharable Link", callback_data="genlink")],
+            [InlineKeyboardButton("📊 View Stats", callback_data="stats")]
+        ])
+    )
+
+@app.on_callback_query(filters.regex("genlink"))
+async def gen_link_handler(client, cq):
+    if cq.from_user.id not in ADMINS:
+        return
+    await cq.message.reply_text("📂 Send me the file from your channel (forward as admin).")
+
+@app.on_message(filters.private & filters.user(ADMINS))
+async def save_file_handler(client, message):
+    if message.forward_from_chat and message.forward_from_chat.id == FILE_CHANNEL:
+        msg_id = message.forward_from_message_id
+        payload = str(msg_id)
+        files_db[payload] = msg_id
+        link = f"https://t.me/{client.me.username}?start={payload}"
+        await message.reply_text(f"✅ Sharable Link Generated:\n\n{link}")
+
+@app.on_callback_query(filters.regex("stats"))
+async def stats_handler(client, cq):
+    if cq.from_user.id not in ADMINS:
+        return
+    total = len(users_db)
+    await cq.message.reply_text(
+        f"📊 **Bot Stats:**\n\n"
+        f"👥 Total Users: {total}\n"
+        f"⏳ Auto Delete: {AUTO_DELETE_MINUTES} min"
+    )
+
+# ========= RUN =========
 if __name__ == "__main__":
     app.run()
