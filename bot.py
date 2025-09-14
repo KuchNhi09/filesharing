@@ -118,8 +118,9 @@ async def callback_handler(client, cq):
         )
 
     elif cq.data.startswith("set_timer_") and is_admin(user_id):
-        global AUTO_DELETE_MINUTES
-        AUTO_DELETE_MINUTES = int(cq.data.split("_", 2)[2])
+        # FIX: global हटाया गया
+        new_timer = int(cq.data.split("_", 2)[2])
+        globals()["AUTO_DELETE_MINUTES"] = new_timer
         await cq.message.reply_text(f"⏳ Auto-delete timer updated: {AUTO_DELETE_MINUTES} minutes")
 
     elif cq.data == "view_settings" and is_admin(user_id):
