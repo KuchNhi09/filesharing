@@ -12,10 +12,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMINS = [8324187938, 603360648]  # 👈 तुम्हारे admin IDs
 FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # -100 से शुरू होने वाला channel id
 
-# Default settings (Panel से बदले जा सकते हैं)
 AUTO_DELETE_MINUTES = 15
 THANK_YOU_MSG = "✅ Thank you for using our bot! Share our channel with friends 🎉"
-FORCE_CHANNELS = []  # यहां channel IDs की list रहेगी
+FORCE_CHANNELS = []
 
 # ---------------- CLIENT ----------------
 app = Client("file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -23,6 +22,7 @@ app = Client("file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_T
 # Users data
 users_db = {}
 today_users = set()
+waiting_for_file = {}  # {admin_id: True/False}
 
 
 # ---------------- HELPERS ----------------
@@ -39,7 +39,6 @@ def user_stats():
 
 
 async def check_force_join(user_id):
-    """Check if user joined all required channels"""
     if not FORCE_CHANNELS:
         return True, []
     not_joined = []
@@ -61,7 +60,6 @@ async def start_handler(client, message):
     today_users.add(user_id)
 
     if len(message.command) == 1:
-        # Normal start
         if is_admin(user_id):
             await message.reply_text(
                 "👋 Welcome Admin!\nUse /panel to manage the bot.",
@@ -80,7 +78,6 @@ async def start_handler(client, message):
                 )
             )
     else:
-        # Start with payload (sharable link)
         payload = message.command[1]
         await send_stored_file(client, message, payload)
 
@@ -103,10 +100,9 @@ async def callback_handler(client, cq):
     elif cq.data == "open_panel" and is_admin(user_id):
         await show_admin_panel(cq.message)
 
-    elif cq.data.startswith("genlink_") and is_admin(user_id):
-        msg_id = cq.data.split("_", 1)[1]
-        link = f"https://t.me/{(await app.get_me()).username}?start={msg_id}"
-        await cq.message.reply_text(f"✅ Sharable Link Generated:\n{link}")
+    elif cq.data == "genlink" and is_admin(user_id):
+        waiting_for_file[user_id] = True
+        await cq.message.reply_text("📂 Please send me the file for which you want a sharable link.")
 
     elif cq.data == "view_stats" and is_admin(user_id):
         stats = user_stats()
@@ -118,7 +114,6 @@ async def callback_handler(client, cq):
         )
 
     elif cq.data.startswith("set_timer_") and is_admin(user_id):
-        # FIX: global हटाया गया
         new_timer = int(cq.data.split("_", 2)[2])
         globals()["AUTO_DELETE_MINUTES"] = new_timer
         await cq.message.reply_text(f"⏳ Auto-delete timer updated: {AUTO_DELETE_MINUTES} minutes")
@@ -165,10 +160,27 @@ async def delete_after(chat_id, msg_id, payload, user_id):
         pass
 
 
+# ---------------- ADMIN FILE UPLOAD ----------------
+@app.on_message(filters.private & filters.document & filters.user(ADMINS))
+async def admin_file_handler(client, message):
+    user_id = message.from_user.id
+    if waiting_for_file.get(user_id):
+        try:
+            sent = await client.copy_message(FILE_CHANNEL, message.chat.id, message.id)
+            msg_id = sent.id
+            bot_username = (await app.get_me()).username
+            link = f"https://t.me/{bot_username}?start={msg_id}"
+            await message.reply_text(f"✅ Sharable Link Generated:\n{link}")
+        except Exception as e:
+            await message.reply_text(f"❌ Failed to save file.\n\nDebug: {e}")
+        finally:
+            waiting_for_file[user_id] = False
+
+
 # ---------------- ADMIN PANEL ----------------
 async def show_admin_panel(msg):
     buttons = [
-        [InlineKeyboardButton("🔗 Generate Link", callback_data="genlink_1")],
+        [InlineKeyboardButton("🔗 Generate Link", callback_data="genlink")],
         [InlineKeyboardButton("📊 View Stats", callback_data="view_stats")],
         [
             InlineKeyboardButton("⏳ Timer 1m", callback_data="set_timer_1"),
