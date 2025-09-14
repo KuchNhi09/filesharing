@@ -24,6 +24,7 @@ app = Client(
 # ========= STORAGE =========
 users_db = set()
 files_db = {}
+waiting_for_file = {}  # track कौन admin अभी file bhejne wala hai
 
 # ========= START HANDLER =========
 @app.on_message(filters.private & filters.command("start"))
@@ -59,7 +60,10 @@ async def start_cmd(client, message):
 # ========= CALLBACKS =========
 @app.on_callback_query()
 async def callback_handler(client, cq):
-    if cq.data == "help":
+    data = cq.data
+    await cq.answer()  # IMPORTANT: respond to button click
+
+    if data == "help":
         await cq.message.reply_text(
             "📖 **How to use me?**\n\n"
             "1. Click on valid sharable links.\n"
@@ -67,13 +71,29 @@ async def callback_handler(client, cq):
             f"3. Files auto-delete after {AUTO_DELETE_MINUTES} minutes ⏳."
         )
 
-    elif cq.data == "feedback":
+    elif data == "feedback":
         await cq.message.reply_text(
             "💌 Please type your request/feedback and send it.\n\n(Admins will receive it directly)"
         )
 
-    elif cq.data.startswith("getfile_"):
-        payload = cq.data.split("_", 1)[1]
+    elif data == "genlink":
+        if cq.from_user.id not in ADMINS:
+            return
+        waiting_for_file[cq.from_user.id] = True
+        await cq.message.reply_text("📂 Send me the file from your channel (forward as admin).")
+
+    elif data == "stats":
+        if cq.from_user.id not in ADMINS:
+            return
+        total = len(users_db)
+        await cq.message.reply_text(
+            f"📊 **Bot Stats:**\n\n"
+            f"👥 Total Users: {total}\n"
+            f"⏳ Auto Delete: {AUTO_DELETE_MINUTES} min"
+        )
+
+    elif data.startswith("getfile_"):
+        payload = data.split("_", 1)[1]
         if payload in files_db:
             msg_id = files_db[payload]
             await send_stored_file(client, cq.message, msg_id, payload)
@@ -81,6 +101,18 @@ async def callback_handler(client, cq):
 # ========= FEEDBACK HANDLER =========
 @app.on_message(filters.private & ~filters.command(["start", "panel"]))
 async def feedback_handler(client, message):
+    # If admin is sending file for link generation
+    if message.from_user.id in ADMINS and message.from_user.id in waiting_for_file:
+        if message.forward_from_chat and message.forward_from_chat.id == FILE_CHANNEL:
+            msg_id = message.forward_from_message_id
+            payload = str(msg_id)
+            files_db[payload] = msg_id
+            link = f"https://t.me/{client.me.username}?start={payload}"
+            await message.reply_text(f"✅ Sharable Link Generated:\n\n{link}")
+            waiting_for_file.pop(message.from_user.id, None)
+            return
+
+    # Otherwise, it's user feedback
     if message.text and message.from_user.id not in ADMINS:
         for admin in ADMINS:
             try:
@@ -134,32 +166,6 @@ async def admin_panel(client, message):
             [InlineKeyboardButton("➕ Generate Sharable Link", callback_data="genlink")],
             [InlineKeyboardButton("📊 View Stats", callback_data="stats")]
         ])
-    )
-
-@app.on_callback_query(filters.regex("genlink"))
-async def gen_link_handler(client, cq):
-    if cq.from_user.id not in ADMINS:
-        return
-    await cq.message.reply_text("📂 Send me the file from your channel (forward as admin).")
-
-@app.on_message(filters.private & filters.user(ADMINS))
-async def save_file_handler(client, message):
-    if message.forward_from_chat and message.forward_from_chat.id == FILE_CHANNEL:
-        msg_id = message.forward_from_message_id
-        payload = str(msg_id)
-        files_db[payload] = msg_id
-        link = f"https://t.me/{client.me.username}?start={payload}"
-        await message.reply_text(f"✅ Sharable Link Generated:\n\n{link}")
-
-@app.on_callback_query(filters.regex("stats"))
-async def stats_handler(client, cq):
-    if cq.from_user.id not in ADMINS:
-        return
-    total = len(users_db)
-    await cq.message.reply_text(
-        f"📊 **Bot Stats:**\n\n"
-        f"👥 Total Users: {total}\n"
-        f"⏳ Auto Delete: {AUTO_DELETE_MINUTES} min"
     )
 
 # ========= RUN =========
