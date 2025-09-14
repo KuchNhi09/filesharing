@@ -9,13 +9,13 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-ADMINS = [8324187938, 603360648]  # 👈 तुम्हारे admin IDs
+ADMINS = [8324187938, 603360648]  # तुम्हारे admin IDs
 FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # -100 से शुरू होने वाला channel id
 
-# Default settings (Panel से बदले जा सकते हैं)
+# Default settings
 AUTO_DELETE_MINUTES = 15
 THANK_YOU_MSG = "✅ Thank you for using our bot! Share our channel with friends 🎉"
-FORCE_CHANNELS = []  # यहां channel IDs की list रहेगी
+FORCE_CHANNELS = []  # Panel से add/remove कर सकते हो
 
 # ---------------- CLIENT ----------------
 app = Client("file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -23,11 +23,13 @@ app = Client("file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_T
 # Users data
 users_db = {}
 today_users = set()
-waiting_for_file = {}  # {admin_id: True/False}
+pending_links = {}  # {admin_id: waiting_for_file}
+
 
 # ---------------- HELPERS ----------------
 def is_admin(user_id):
     return user_id in ADMINS
+
 
 def user_stats():
     return {
@@ -36,7 +38,9 @@ def user_stats():
         "active": sum(1 for u in users_db.values() if datetime.now() - u < timedelta(days=7))
     }
 
+
 async def check_force_join(user_id):
+    """Check if user joined all required channels"""
     if not FORCE_CHANNELS:
         return True, []
     not_joined = []
@@ -49,7 +53,8 @@ async def check_force_join(user_id):
             not_joined.append(ch)
     return (len(not_joined) == 0), not_joined
 
-# ---------------- HANDLERS ----------------
+
+# ---------------- START HANDLER ----------------
 @app.on_message(filters.private & filters.command("start"))
 async def start_handler(client, message):
     user_id = message.from_user.id
@@ -57,6 +62,7 @@ async def start_handler(client, message):
     today_users.add(user_id)
 
     if len(message.command) == 1:
+        # Normal start
         if is_admin(user_id):
             await message.reply_text(
                 "👋 Welcome Admin!\nUse /panel to manage the bot.",
@@ -75,13 +81,17 @@ async def start_handler(client, message):
                 )
             )
     else:
+        # Start with payload (sharable link)
         payload = message.command[1]
         await send_stored_file(client, message, payload)
 
+
+# ---------------- CALLBACK HANDLER ----------------
 @app.on_callback_query()
 async def callback_handler(client, cq):
     user_id = cq.from_user.id
 
+    # HELP
     if cq.data == "help":
         await cq.message.reply_text(
             "📖 **How to use me?**\n\n"
@@ -90,16 +100,20 @@ async def callback_handler(client, cq):
             "• Save/forward them immediately!"
         )
 
+    # REQUEST
     elif cq.data == "request":
         await cq.message.reply_text("✍️ Please type your request. It will be forwarded to admin.")
 
+    # ADMIN PANEL
     elif cq.data == "open_panel" and is_admin(user_id):
         await show_admin_panel(cq.message)
 
+    # GENERATE LINK START
     elif cq.data == "genlink" and is_admin(user_id):
-        waiting_for_file[user_id] = True
-        await cq.message.reply_text("📂 Please send me the file for which you want a sharable link.")
+        pending_links[user_id] = True
+        await cq.message.reply_text("📤 Please send me the file now to generate a sharable link.")
 
+    # VIEW STATS
     elif cq.data == "view_stats" and is_admin(user_id):
         stats = user_stats()
         await cq.message.reply_text(
@@ -109,11 +123,13 @@ async def callback_handler(client, cq):
             f"🔥 Active (7d): {stats['active']}"
         )
 
+    # CHANGE TIMER
     elif cq.data.startswith("set_timer_") and is_admin(user_id):
         new_timer = int(cq.data.split("_", 2)[2])
         globals()["AUTO_DELETE_MINUTES"] = new_timer
         await cq.message.reply_text(f"⏳ Auto-delete timer updated: {AUTO_DELETE_MINUTES} minutes")
 
+    # VIEW SETTINGS
     elif cq.data == "view_settings" and is_admin(user_id):
         await cq.message.reply_text(
             f"⚙️ **Current Settings**:\n\n"
@@ -121,6 +137,17 @@ async def callback_handler(client, cq):
             f"🙏 Thank you msg: {THANK_YOU_MSG}\n"
             f"📌 Force Channels: {FORCE_CHANNELS or 'None'}"
         )
+
+    # ADD FORCE CHANNEL
+    elif cq.data == "add_channel" and is_admin(user_id):
+        pending_links[user_id] = "add_channel"
+        await cq.message.reply_text("📌 Send me the channel ID (like -100xxxx) to add in force join.")
+
+    # REMOVE FORCE CHANNEL
+    elif cq.data == "remove_channel" and is_admin(user_id):
+        pending_links[user_id] = "remove_channel"
+        await cq.message.reply_text("❌ Send me the channel ID to remove from force join.")
+
 
 # ---------------- FILE HANDLING ----------------
 async def send_stored_file(client, message, payload):
@@ -145,6 +172,7 @@ async def send_stored_file(client, message, payload):
     except Exception as e:
         await message.reply_text(f"❌ File not found!\n\nDebug: {e}")
 
+
 async def delete_after(chat_id, msg_id, payload, user_id):
     await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
     try:
@@ -152,6 +180,7 @@ async def delete_after(chat_id, msg_id, payload, user_id):
         await app.send_message(user_id, THANK_YOU_MSG)
     except:
         pass
+
 
 # ---------------- ADMIN PANEL ----------------
 async def show_admin_panel(msg):
@@ -163,39 +192,69 @@ async def show_admin_panel(msg):
             InlineKeyboardButton("⏳ Timer 15m", callback_data="set_timer_15"),
             InlineKeyboardButton("⏳ Timer 60m", callback_data="set_timer_60"),
         ],
-        [InlineKeyboardButton("⚙️ View Current Settings", callback_data="view_settings")]
+        [InlineKeyboardButton("⚙️ View Current Settings", callback_data="view_settings")],
+        [
+            InlineKeyboardButton("➕ Add Force Channel", callback_data="add_channel"),
+            InlineKeyboardButton("➖ Remove Force Channel", callback_data="remove_channel"),
+        ]
     ]
     await msg.reply_text("⚙️ **Admin Panel**", reply_markup=InlineKeyboardMarkup(buttons))
 
-# ---------------- ADMIN FILE HANDLER ----------------
-@app.on_message(filters.private & filters.document & filters.user(ADMINS))
-async def admin_file_handler(client, message):
-    user_id = message.from_user.id
-    if waiting_for_file.get(user_id):
-        try:
-            sent = await client.copy_message(FILE_CHANNEL, message.chat.id, message.id)
-            msg_id = sent.id
-            bot_username = (await app.get_me()).username
-            link = f"https://t.me/{bot_username}?start={msg_id}"
-            await message.reply_text(f"✅ Sharable Link Generated:\n{link}")
-        except Exception as e:
-            await message.reply_text(f"❌ Failed to save file.\n\nDebug: {e}")
-        finally:
-            waiting_for_file[user_id] = False
 
 # ---------------- REQUEST HANDLING ----------------
 @app.on_message(filters.private & ~filters.command("start"))
 async def handle_requests(client, message):
     user_id = message.from_user.id
-    if message.reply_to_message and "Please type your request" in message.reply_to_message.text:
+
+    # File for link generation
+    if user_id in pending_links and pending_links[user_id] is True and is_admin(user_id):
+        try:
+            # Save file in FILE_CHANNEL
+            sent = await message.copy(FILE_CHANNEL)
+            link = f"https://t.me/{(await app.get_me()).username}?start={sent.id}"
+            await message.reply_text(f"✅ Sharable Link Generated:\n{link}")
+        except Exception as e:
+            await message.reply_text(f"❌ Error saving file: {e}")
+        finally:
+            pending_links.pop(user_id, None)
+
+    # Add Force Channel
+    elif user_id in pending_links and pending_links[user_id] == "add_channel":
+        try:
+            ch_id = int(message.text.strip())
+            FORCE_CHANNELS.append(ch_id)
+            await message.reply_text(f"✅ Channel {ch_id} added to force join list.")
+        except:
+            await message.reply_text("❌ Invalid channel ID.")
+        finally:
+            pending_links.pop(user_id, None)
+
+    # Remove Force Channel
+    elif user_id in pending_links and pending_links[user_id] == "remove_channel":
+        try:
+            ch_id = int(message.text.strip())
+            if ch_id in FORCE_CHANNELS:
+                FORCE_CHANNELS.remove(ch_id)
+                await message.reply_text(f"✅ Channel {ch_id} removed from force join list.")
+            else:
+                await message.reply_text("❌ Channel not found in list.")
+        except:
+            await message.reply_text("❌ Invalid channel ID.")
+        finally:
+            pending_links.pop(user_id, None)
+
+    # Requests from users
+    elif message.reply_to_message and "Please type your request" in message.reply_to_message.text:
         for admin in ADMINS:
             try:
                 await client.send_message(admin, f"📩 New request from {user_id}:\n\n{message.text}")
             except:
                 pass
         await message.reply_text("✅ Your request has been sent to admins.")
+
     elif not is_admin(user_id):
         await message.reply_text("⚠️ Files are only available via sharable links!")
+
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
