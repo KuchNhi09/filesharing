@@ -2,7 +2,6 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime
 
 # ─────────────────────────────
 # ENV variables
@@ -13,12 +12,13 @@ FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # channel where files are stored
 ADMINS = [8324187938, 603360648]  # your admin IDs
 # ─────────────────────────────
 
-# runtime settings (panel से change होंगे)
-FORCE_CHANNELS = []   # जिन channels को compulsory join करना है
+# runtime settings
+FORCE_CHANNELS = []
 THANK_YOU_MSG = "🙏 Thanks for using me! Please share our channel with your friends ❤️"
 AUTO_DELETE_MINUTES = 15
 
 USERS = set()
+WAITING_MODE = {}  # {admin_id: "mode"}
 app = Client("main-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 
@@ -135,7 +135,6 @@ async def callbacks(client, cq):
 
     elif data == "genlink":
         await cq.message.reply_text("📩 Send me the file from file channel.")
-        app.set_parse_mode("html")  # just to avoid warnings
 
     elif data.startswith("retry_"):
         payload = data.split("_", 1)[1]
@@ -154,14 +153,18 @@ async def callbacks(client, cq):
         )
 
     elif data == "forcechannels":
+        WAITING_MODE[uid] = "force"
         await cq.message.reply_text(
-            f"📌 Current Force Channels:\n{FORCE_CHANNELS or 'None'}\n\nSend @channelusername to add or remove."
+            f"📌 Current Force Channels:\n{FORCE_CHANNELS or 'None'}\n\n"
+            "Send @channelusername to add/remove."
         )
 
     elif data == "changethanks":
+        WAITING_MODE[uid] = "thanks"
         await cq.message.reply_text("🙏 Send me the new Thank You message.")
 
     elif data == "changetimer":
+        WAITING_MODE[uid] = "timer"
         await cq.message.reply_text("⏳ Send me new auto delete time (in minutes).")
 
     elif data == "viewsettings":
@@ -182,31 +185,32 @@ async def admin_updates(client, message):
     if not await is_admin(uid):
         return
 
-    # Add/remove force channel
-    if text.startswith("@"):
-        if text in FORCE_CHANNELS:
-            FORCE_CHANNELS.remove(text)
-            await message.reply_text(f"❌ Removed {text} from force join list.")
-        else:
-            FORCE_CHANNELS.append(text)
-            await message.reply_text(f"✅ Added {text} to force join list.")
-        return
+    if uid in WAITING_MODE:
+        mode = WAITING_MODE.pop(uid)
 
-    # Change thank you message
-    if message.reply_to_message and "Thank You message" in message.reply_to_message.text:
-        global THANK_YOU_MSG
-        THANK_YOU_MSG = text
-        await message.reply_text("✅ Thank You message updated.")
-        return
+        if mode == "force":
+            if text.startswith("@"):
+                if text in FORCE_CHANNELS:
+                    FORCE_CHANNELS.remove(text)
+                    await message.reply_text(f"❌ Removed {text} from force join list.")
+                else:
+                    FORCE_CHANNELS.append(text)
+                    await message.reply_text(f"✅ Added {text} to force join list.")
+            else:
+                await message.reply_text("❌ Please send valid @channelusername")
 
-    # Change timer
-    if message.reply_to_message and "auto delete" in message.reply_to_message.text.lower():
-        global AUTO_DELETE_MINUTES
-        try:
-            AUTO_DELETE_MINUTES = int(text)
-            await message.reply_text(f"✅ Auto delete timer set to {AUTO_DELETE_MINUTES} minutes.")
-        except:
-            await message.reply_text("❌ Invalid number.")
+        elif mode == "thanks":
+            global THANK_YOU_MSG
+            THANK_YOU_MSG = text
+            await message.reply_text("✅ Thank You message updated.")
+
+        elif mode == "timer":
+            global AUTO_DELETE_MINUTES
+            try:
+                AUTO_DELETE_MINUTES = int(text)
+                await message.reply_text(f"✅ Auto delete timer set to {AUTO_DELETE_MINUTES} minutes.")
+            except:
+                await message.reply_text("❌ Invalid number.")
         return
 
 
