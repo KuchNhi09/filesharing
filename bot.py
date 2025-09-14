@@ -2,172 +2,214 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime
 
-# ========= ENV VARIABLES =========
+# ─────────────────────────────
+# ENV variables
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # -100 से शुरू होने वाला Channel ID
-AUTO_DELETE_MINUTES = int(os.getenv("AUTO_DELETE_MINUTES") or 15)
+FILE_CHANNEL = int(os.getenv("FILE_CHANNEL"))  # channel where files are stored
+ADMINS = [8324187938, 603360648]  # your admin IDs
+# ─────────────────────────────
 
-# ========= ADMINS =========
-ADMINS = [8324187938, 603360648]
+# runtime settings (panel से change होंगे)
+FORCE_CHANNELS = []   # जिन channels को compulsory join करना है
+THANK_YOU_MSG = "🙏 Thanks for using me! Please share our channel with your friends ❤️"
+AUTO_DELETE_MINUTES = 15
 
-# ========= BOT INIT =========
-app = Client(
-    "file_store_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+USERS = set()
+app = Client("main-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# ========= STORAGE =========
-users_db = set()
-files_db = {}
-waiting_for_file = {}  # track कौन admin अभी file bhejne wala hai
 
-# ========= START HANDLER =========
+# ─────────────────────────────
+# Helpers
+async def is_admin(user_id: int):
+    return user_id in ADMINS
+
+async def check_force_join(user_id: int):
+    if not FORCE_CHANNELS:
+        return True, []
+    not_joined = []
+    for ch in FORCE_CHANNELS:
+        try:
+            member = await app.get_chat_member(ch, user_id)
+            if member.status in ["left", "kicked"]:
+                not_joined.append(ch)
+        except:
+            not_joined.append(ch)
+    return len(not_joined) == 0, not_joined
+
+
+# ─────────────────────────────
+# Commands
 @app.on_message(filters.private & filters.command("start"))
 async def start_cmd(client, message):
-    users_db.add(message.from_user.id)
+    user_id = message.from_user.id
+    USERS.add(user_id)
 
     if len(message.command) == 1:
-        # Normal start (Welcome msg)
-        if message.from_user.id in ADMINS:
-            await message.reply_text("👋 Welcome Admin!\nSend /panel to open admin panel.")
+        if await is_admin(user_id):
+            await message.reply_text(
+                "👋 Welcome Admin!\n\nUse /panel to open the control panel."
+            )
         else:
             await message.reply_text(
                 f"Hello {message.from_user.first_name} ✨\n\n"
-                "Send me any file and I’ll give you a sharable link 📂\n\n"
-                "Users can access stored messages by clicking those links.\n\n"
-                "To know more, click the Help button 👇",
-                reply_markup=InlineKeyboardMarkup(
-                    [[
-                        InlineKeyboardButton("📖 Help", callback_data="help"),
-                        InlineKeyboardButton("📝 Request/Feedback", callback_data="feedback")
-                    ]]
-                ),
+                "Send me any sharable link to get your file 📂\n\n"
+                "Only sharable links will work, random /start codes will not."
             )
     else:
-        # Payload (Sharable link)
         payload = message.command[1]
-        if payload in files_db:
-            msg_id = files_db[payload]
-            await send_stored_file(client, message, msg_id, payload)
-        else:
-            await message.reply_text("❌ Invalid or expired sharable link!")
+        await handle_payload(message, payload)
 
-# ========= CALLBACKS =========
-@app.on_callback_query()
-async def callback_handler(client, cq):
-    data = cq.data
-    await cq.answer()  # IMPORTANT: respond to button click
 
-    if data == "help":
-        await cq.message.reply_text(
-            "📖 **How to use me?**\n\n"
-            "1. Click on valid sharable links.\n"
-            "2. I will send you the requested file.\n"
-            f"3. Files auto-delete after {AUTO_DELETE_MINUTES} minutes ⏳."
-        )
+@app.on_message(filters.private & filters.command("panel"))
+async def panel_cmd(client, message):
+    if not await is_admin(message.from_user.id):
+        return
+    await message.reply_text(
+        "⚙️ **Admin Panel**",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📂 Generate Sharable Link", callback_data="genlink")],
+            [InlineKeyboardButton("📊 View Stats", callback_data="stats")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="settings")]
+        ])
+    )
 
-    elif data == "feedback":
-        await cq.message.reply_text(
-            "💌 Please type your request/feedback and send it.\n\n(Admins will receive it directly)"
-        )
 
-    elif data == "genlink":
-        if cq.from_user.id not in ADMINS:
-            return
-        waiting_for_file[cq.from_user.id] = True
-        await cq.message.reply_text("📂 Send me the file from your channel (forward as admin).")
+# ─────────────────────────────
+# Payload handler
+async def handle_payload(message, payload):
+    user_id = message.from_user.id
+    ok, not_joined = await check_force_join(user_id)
+    if not ok:
+        btns = [[InlineKeyboardButton(f"Join {ch}", url=f"https://t.me/{ch.replace('@','')}")] for ch in not_joined]
+        btns.append([InlineKeyboardButton("✅ I Joined, Try Again", callback_data=f"retry_{payload}")])
+        await message.reply_text("❌ Please join required channels to continue:", reply_markup=InlineKeyboardMarkup(btns))
+        return
 
-    elif data == "stats":
-        if cq.from_user.id not in ADMINS:
-            return
-        total = len(users_db)
-        await cq.message.reply_text(
-            f"📊 **Bot Stats:**\n\n"
-            f"👥 Total Users: {total}\n"
-            f"⏳ Auto Delete: {AUTO_DELETE_MINUTES} min"
-        )
-
-    elif data.startswith("getfile_"):
-        payload = data.split("_", 1)[1]
-        if payload in files_db:
-            msg_id = files_db[payload]
-            await send_stored_file(client, cq.message, msg_id, payload)
-
-# ========= FEEDBACK HANDLER =========
-@app.on_message(filters.private & ~filters.command(["start", "panel"]))
-async def feedback_handler(client, message):
-    # If admin is sending file for link generation
-    if message.from_user.id in ADMINS and message.from_user.id in waiting_for_file:
-        if message.forward_from_chat and message.forward_from_chat.id == FILE_CHANNEL:
-            msg_id = message.forward_from_message_id
-            payload = str(msg_id)
-            files_db[payload] = msg_id
-            link = f"https://t.me/{client.me.username}?start={payload}"
-            await message.reply_text(f"✅ Sharable Link Generated:\n\n{link}")
-            waiting_for_file.pop(message.from_user.id, None)
-            return
-
-    # Otherwise, it's user feedback
-    if message.text and message.from_user.id not in ADMINS:
-        for admin in ADMINS:
-            try:
-                await client.send_message(
-                    admin,
-                    f"📩 **Feedback from {message.from_user.mention}:**\n\n{message.text}"
-                )
-            except:
-                pass
-
-# ========= FILE SENDER =========
-async def send_stored_file(client, message, msg_id, payload):
     try:
-        sent = await client.copy_message(
-            message.chat.id,
-            FILE_CHANNEL,
-            msg_id
-        )
-        await message.reply_text(
-            f"⚠️ **Important:**\n\n"
-            f"All messages will be deleted after {AUTO_DELETE_MINUTES} minutes.\n"
-            "Please **save or forward** them to your personal Saved Messages!"
-        )
-        asyncio.create_task(delete_after(sent.chat.id, sent.message_id, payload, message.chat.id))
-    except Exception as e:
-        await message.reply_text("❌ File not found or expired!")
+        msg_id = int(payload)
+        sent = await app.copy_message(user_id, FILE_CHANNEL, msg_id)
 
-# ========= AUTO DELETE =========
-async def delete_after(chat_id, msg_id, payload, user_id):
+        await message.reply_text(
+            f"⚠️ Save or forward this file. It will be deleted after {AUTO_DELETE_MINUTES} minutes."
+        )
+
+        asyncio.create_task(auto_delete(sent.chat.id, sent.id, payload, user_id))
+    except Exception as e:
+        await message.reply_text(f"❌ File not found!\n\nDebug: {e}")
+
+
+# ─────────────────────────────
+# Auto delete + Thank you
+async def auto_delete(chat_id, msg_id, payload, user_id):
     await asyncio.sleep(AUTO_DELETE_MINUTES * 60)
     try:
         await app.delete_messages(chat_id, msg_id)
         await app.send_message(
             user_id,
-            "🗑️ Your file has been deleted!\n\nClick below to get it again 👇",
+            "🗑️ Your file was auto-deleted.\n\n"
+            "Click below to get it again 👇",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔁 Get File Again!", callback_data=f"getfile_{payload}")]]
+                [[InlineKeyboardButton("🔁 Get File Again", callback_data=f"retry_{payload}")]]
             )
         )
+        await app.send_message(user_id, THANK_YOU_MSG)
     except:
         pass
 
-# ========= ADMIN PANEL =========
-@app.on_message(filters.private & filters.command("panel"))
-async def admin_panel(client, message):
-    if message.from_user.id not in ADMINS:
-        return
-    await message.reply_text(
-        "⚙️ **Admin Panel**\n\nChoose an option:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Generate Sharable Link", callback_data="genlink")],
-            [InlineKeyboardButton("📊 View Stats", callback_data="stats")]
-        ])
-    )
 
-# ========= RUN =========
-if __name__ == "__main__":
-    app.run()
+# ─────────────────────────────
+# Callbacks
+@app.on_callback_query()
+async def callbacks(client, cq):
+    data = cq.data
+    uid = cq.from_user.id
+
+    if data == "stats":
+        await cq.message.reply_text(
+            f"📊 Stats:\n\nTotal Users: {len(USERS)}\nAdmins: {len(ADMINS)}"
+        )
+
+    elif data == "genlink":
+        await cq.message.reply_text("📩 Send me the file from file channel.")
+        app.set_parse_mode("html")  # just to avoid warnings
+
+    elif data.startswith("retry_"):
+        payload = data.split("_", 1)[1]
+        await handle_payload(cq.message, payload)
+
+    elif data == "settings":
+        if not await is_admin(uid): return
+        await cq.message.reply_text(
+            "⚙️ Settings Menu",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📌 Manage Force Join Channels", callback_data="forcechannels")],
+                [InlineKeyboardButton("🙏 Change Thank You Msg", callback_data="changethanks")],
+                [InlineKeyboardButton("⏳ Change Auto Delete Timer", callback_data="changetimer")],
+                [InlineKeyboardButton("👁 View Current Settings", callback_data="viewsettings")]
+            ])
+        )
+
+    elif data == "forcechannels":
+        await cq.message.reply_text(
+            f"📌 Current Force Channels:\n{FORCE_CHANNELS or 'None'}\n\nSend @channelusername to add or remove."
+        )
+
+    elif data == "changethanks":
+        await cq.message.reply_text("🙏 Send me the new Thank You message.")
+
+    elif data == "changetimer":
+        await cq.message.reply_text("⏳ Send me new auto delete time (in minutes).")
+
+    elif data == "viewsettings":
+        await cq.message.reply_text(
+            f"⚙️ Current Settings:\n\nForce Channels: {FORCE_CHANNELS}\n"
+            f"Thank You Msg: {THANK_YOU_MSG}\n"
+            f"Auto Delete: {AUTO_DELETE_MINUTES} minutes"
+        )
+
+
+# ─────────────────────────────
+# Messages listener (for admin settings update)
+@app.on_message(filters.private & filters.text)
+async def admin_updates(client, message):
+    uid = message.from_user.id
+    text = message.text.strip()
+
+    if not await is_admin(uid):
+        return
+
+    # Add/remove force channel
+    if text.startswith("@"):
+        if text in FORCE_CHANNELS:
+            FORCE_CHANNELS.remove(text)
+            await message.reply_text(f"❌ Removed {text} from force join list.")
+        else:
+            FORCE_CHANNELS.append(text)
+            await message.reply_text(f"✅ Added {text} to force join list.")
+        return
+
+    # Change thank you message
+    if message.reply_to_message and "Thank You message" in message.reply_to_message.text:
+        global THANK_YOU_MSG
+        THANK_YOU_MSG = text
+        await message.reply_text("✅ Thank You message updated.")
+        return
+
+    # Change timer
+    if message.reply_to_message and "auto delete" in message.reply_to_message.text.lower():
+        global AUTO_DELETE_MINUTES
+        try:
+            AUTO_DELETE_MINUTES = int(text)
+            await message.reply_text(f"✅ Auto delete timer set to {AUTO_DELETE_MINUTES} minutes.")
+        except:
+            await message.reply_text("❌ Invalid number.")
+        return
+
+
+# ─────────────────────────────
+print("Bot started ✅")
+app.run()
